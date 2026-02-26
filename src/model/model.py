@@ -1,7 +1,8 @@
 import torch 
 import torch.nn as nn
 import math
-
+import sys 
+import os
 
 class Embedding(nn.Module):
     def __init__(self,d_model:int,vocab_size:int):
@@ -11,7 +12,7 @@ class Embedding(nn.Module):
         self.embedding = nn.Embedding(vocab_size,d_model)
 
     def forward(self,x):
-        return self.embedding(x) * torch.sqrt(self.d_model)
+        return self.embedding(x) * math.sqrt(self.d_model)
     
 
 class PositionalEncoding(nn.Module):
@@ -179,7 +180,7 @@ class Transformer(nn.Module):
         self.projection_layer = projection_layer
 
     def encode(self,src,src_mask):
-        src = self.src_embededding(src)
+        src = self.src_embedding(src)
         src =  self.src_positional_encoding(src)
         return self.encoder(src,src_mask)
     def decode(self,encode_output,src_mask,tgt,tgt_mask):
