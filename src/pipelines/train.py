@@ -14,11 +14,62 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from model.model import build_transformer
-from utils.dataset import BilingualDataset
+from utils.dataset import BilingualDataset, causal_mask
 from utils.config import get_config,get_weights_file_path
 
 from tqdm import tqdm
 import warnings
+
+
+def greedy_decode(model,source,source_mask,tokenizer_src,tokenizer_tgt,max_len,device):
+    sos_idx = tokenizer_tgt.token_to_id("[SOS]")
+    eos_idx = tokenizer_tgt.token_to_id("[EOS]")
+
+    encoder_output = model.encode(source,source_mask)
+    decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
+    while True:
+        if decoder_input.size(1)==max_len:
+            break
+        decoder_mask = causal_mask(decoder_input.size(1)).type_as(source_mask).to(device)
+        out = model.decode(encoder_output,source_mask,decoder_input,decoder_mask)
+        prob = model.project(out[:,-1,:])
+        _,next_token = torch.max(prob,dim=1)
+        decoder_input = torch.cat([decoder_input,torch.empty(1,1).type_as(source).fill_(next_token.item()).to(device)],dim=1)
+        if next_token.item() == eos_idx:
+            break
+
+    return decoder_input.squeeze(0)
+
+
+def run_validation(model,validation_ds,tokenizer_src,tokenizer_tgt,max_len,device,print_msg,global_state,writer,num_examples=2):
+    model.eval()
+    count=0
+
+    source_texts = []
+    expected = []
+    predicted = []
+    console_width = 80
+    with torch.no_grad():
+        for batch in validation_ds:
+            count+=1
+            encoder_input = batch['encoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+            
+            assert encoder_input.size(0) ==1,"Batch size must be 1 for validation"
+            model_output = greedy_decode(model,encoder_input,encoder_mask,tokenizer_src,tokenizer_tgt,max_len,device)
+
+            source_text =  batch['src_text'][0]
+            target_text = batch['tgt_text'][0]
+            model_out_text = tokenizer_tgt.decode(model_output.detach().cpu().numpy())
+
+            print_msg(f"\n{'='*console_width}")
+            print_msg(f"Source: {source_text}")
+            print_msg(f"Target: {target_text}")
+            print_msg(f"Model Output: {model_out_text}")
+
+            if count==num_examples:
+                break
+
 
 def get_all_sentences(ds,lang):
     for item in ds:
@@ -70,6 +121,11 @@ def get_ds(config):
 
     return train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt  
 
+def count_parameters(model):
+    """Count total trainable parameters in the model."""
+    total = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total
+
 def get_model(config,vocab_src_len,vocab_tgt_len):
     model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'],config['seq_len'],config['d_model'])
     return model
@@ -81,6 +137,27 @@ def train_model(config):
     Path(config['model_folder']).mkdir(parents=True,exist_ok=True)
     train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config)
     model = get_model(config,tokenizer_src.get_vocab_size(),tokenizer_tgt.get_vocab_size()).to(device)
+
+    # Display model and vocabulary info
+    model_params = count_parameters(model)
+    src_vocab_size = tokenizer_src.get_vocab_size()
+    tgt_vocab_size = tokenizer_tgt.get_vocab_size()
+    train_size = len(train_dataloader)
+    total_tokens_per_epoch = train_size * config['batch_size'] * config['seq_len']
+
+    print(f"\n{'='*50}")
+    print(f"Model Configuration:")
+    print(f"{'='*50}")
+    print(f"Total parameters: {model_params:,}")
+    print(f"Model dimension (d_model): {config['d_model']}")
+    print(f"Source vocab size: {src_vocab_size:,}")
+    print(f"Target vocab size: {tgt_vocab_size:,}")
+    print(f"Max sequence length: {config['seq_len']}")
+    print(f"Training batches: {train_size:,}")
+    print(f"Approx tokens per epoch: {total_tokens_per_epoch:,}")
+    print(f"Total epochs: {config['num_epochs']}")
+    print(f"{'='*50}\n")
+
     writer = SummaryWriter(config['experiment_name'])
     optimizer = torch.optim.Adam(model.parameters(),lr=config['lr'],eps=1e-9)
 
@@ -97,9 +174,9 @@ def train_model(config):
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
 
     for epoch in range(initial_epoch,config['num_epochs']):
-        model.train()
         batch_iterator = tqdm(train_dataloader,desc=f"Processing epoch {epoch:02d}")
         for batch in batch_iterator:
+            model.train()
             encoder_input = batch['encoder_input'].to(device)
             decoder_input = batch['decoder_input'].to(device)
             encoder_mask = batch['encoder_mask'].to(device)
@@ -119,6 +196,8 @@ def train_model(config):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
+            
+            run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,config['seq_len'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
 
             global_step += 1
 
