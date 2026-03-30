@@ -9,6 +9,7 @@ from tokenizers.trainers import WordLevelTrainer
 from tokenizers.pre_tokenizers import Whitespace
 
 from pathlib import Path
+import json
 
 from datasets import load_dataset
 from src.model.model import build_transformer
@@ -152,6 +153,23 @@ def train_model(config):
     print(f"Total epochs: {config['num_epochs']}")
     print(f"{'='*50}\n")
 
+    # Save model configuration metadata at the start of training
+    metadata = {
+        "config": config,
+        "model_parameters": int(model_params),
+        "src_vocab_size": int(src_vocab_size),
+        "tgt_vocab_size": int(tgt_vocab_size),
+        "seq_len": int(config['seq_len']),
+        "batch_size": int(config['batch_size']),
+        "num_epochs": int(config['num_epochs']),
+        "tokens_per_epoch": int(total_tokens_per_epoch),
+        "device": str(device),
+    }
+
+    metadata_path = Path(config['model_folder']) / "model_metadata.json"
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
+
     writer = SummaryWriter(config['experiment_name'])
     optimizer = torch.optim.Adam(model.parameters(),lr=config['lr'],eps=1e-9)
 
@@ -167,6 +185,8 @@ def train_model(config):
         global_step = state['global_step']
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
+
+    last_loss_value = None
 
     for epoch in range(initial_epoch,config['num_epochs']):
         batch_iterator = tqdm(train_dataloader,desc=f"Processing epoch {epoch:02d}")
@@ -184,6 +204,8 @@ def train_model(config):
             label = batch['label'].to(device)
             loss = loss_fn(proj_output.view(-1,tokenizer_tgt.get_vocab_size()),label.view(-1))    
             batch_iterator.set_postfix({f"loss":f"{loss.item():6.3f}"})
+
+            last_loss_value = loss.item()
 
             writer.add_scalar("train loss",loss.item(),global_step)
             writer.flush()
@@ -203,6 +225,11 @@ def train_model(config):
             'optimizer_state_dict': optimizer.state_dict(),
             'global_step': global_step
         }, model_filename)  
+
+    # Update metadata with the final training loss after all epochs
+    metadata["final_training_loss"] = float(last_loss_value) if last_loss_value is not None else None
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
