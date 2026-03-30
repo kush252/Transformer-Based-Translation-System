@@ -166,7 +166,7 @@ class ProjectionLayer(nn.Module):
         self.proj = nn.Linear(d_model,vocab_size)
 
     def forward(self,x):
-        return torch.softmax(self.proj(x),dim=-1)
+        return self.proj(x)
     
 class Transformer(nn.Module):
     def __init__(self,encoder:Encoder,decoder:Decoder,src_embedding:Embedding,tgt_embedding:Embedding,src_positional_encoding:PositionalEncoding,tgt_positional_encoding:PositionalEncoding,projection_layer:ProjectionLayer):

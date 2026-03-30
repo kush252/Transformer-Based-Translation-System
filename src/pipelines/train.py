@@ -3,23 +3,20 @@ import torch.nn as nn
 from torch.utils.data import Dataset,DataLoader,random_split
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import load_dataset
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel 
 from tokenizers.trainers import WordLevelTrainer
 from tokenizers.pre_tokenizers import Whitespace
 
 from pathlib import Path
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from model.model import build_transformer
-from utils.dataset import BilingualDataset, causal_mask
-from utils.config import get_config,get_weights_file_path
+
+from datasets import load_dataset
+from src.model.model import build_transformer
+from src.utils.dataset import BilingualDataset, causal_mask
+from src.utils.config import get_config,get_weights_file_path
 
 from tqdm import tqdm
 import warnings
-
 
 def greedy_decode(model,source,source_mask,tokenizer_src,tokenizer_tgt,max_len,device):
     sos_idx = tokenizer_tgt.token_to_id("[SOS]")
@@ -45,9 +42,6 @@ def run_validation(model,validation_ds,tokenizer_src,tokenizer_tgt,max_len,devic
     model.eval()
     count=0
 
-    source_texts = []
-    expected = []
-    predicted = []
     console_width = 80
     with torch.no_grad():
         for batch in validation_ds:
@@ -169,6 +163,7 @@ def train_model(config):
         state = torch.load(model_filename)
         initial_epoch = state['epoch'] + 1
         optimizer.load_state_dict(state['optimizer_state_dict'])
+        model.load_state_dict(state['model_state_dict'])
         global_step = state['global_step']
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
@@ -196,11 +191,10 @@ def train_model(config):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            
-            run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,config['seq_len'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
 
             global_step += 1
 
+        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,config['seq_len'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
         
         model_filename = get_weights_file_path(config,f'{epoch:02d}')
         torch.save({
