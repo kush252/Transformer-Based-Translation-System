@@ -191,6 +191,12 @@ class Transformer(nn.Module):
     def project(self,x):
         return self.projection_layer(x)
     
+    def forward(self, src, src_mask, tgt, tgt_mask):
+        encoder_output = self.encode(src, src_mask)
+        decoder_output = self.decode(encoder_output, src_mask, tgt, tgt_mask)
+        logits = self.project(decoder_output)
+        return logits
+    
 
 def build_transformer(src_vocab_size:int,tgt_vocab_size:int,src_seq_len:int,tgt_seq_len:int,d_model:int=512,N:int=6,h:int=8,dropout:float=0.1,d_ff:int=2048):
     src_embed = Embedding(d_model,src_vocab_size)

@@ -20,9 +20,9 @@ from src.utils.config import get_config,get_weights_file_path
 from tqdm import tqdm
 import warnings
 
-def greedy_decode(model,source,source_mask,tokenizer_src,tokenizer_tgt,max_len,device):
-    sos_idx = tokenizer_tgt.token_to_id("[SOS]")
-    eos_idx = tokenizer_tgt.token_to_id("[EOS]")
+def greedy_decode(model,source,source_mask,tokenizer_src,tokenizer_tgt,max_len,device,model_config):
+    sos_idx = model_config.bos_token_id
+    eos_idx = model_config.eos_token_id
 
     encoder_output = model.encode(source,source_mask)
     decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
@@ -40,7 +40,7 @@ def greedy_decode(model,source,source_mask,tokenizer_src,tokenizer_tgt,max_len,d
     return decoder_input.squeeze(0)
 
 
-def run_validation(model,validation_ds,tokenizer_src,tokenizer_tgt,max_len,device,print_msg,global_state,writer,num_examples=2):
+def run_validation(model,validation_ds,tokenizer_src,tokenizer_tgt,max_len,device,print_msg,global_state,writer,model_config,num_examples=2):
     model.eval()
     count=0
 
@@ -52,7 +52,7 @@ def run_validation(model,validation_ds,tokenizer_src,tokenizer_tgt,max_len,devic
             encoder_mask = batch['encoder_mask'].to(device)
             
             assert encoder_input.size(0) ==1,"Batch size must be 1 for validation"
-            model_output = greedy_decode(model,encoder_input,encoder_mask,tokenizer_src,tokenizer_tgt,max_len,device)
+            model_output = greedy_decode(model,encoder_input,encoder_mask,tokenizer_src,tokenizer_tgt,max_len,device,model_config)
 
             source_text =  batch['src_text'][0]
             target_text = batch['tgt_text'][0]
@@ -122,18 +122,22 @@ def count_parameters(model):
     total = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total
 
-def get_model(vocab_src_len, vocab_tgt_len, model_config):
-    """Build transformer using model config from config.json"""
+def get_model(config):
+    """Build transformer using config as single source of truth (HuggingFace standard).
+    
+    Args:
+        config: PretrainedConfig object with all model architecture parameters
+    """
     model = build_transformer(
-        src_vocab_size=vocab_src_len,
-        tgt_vocab_size=vocab_tgt_len,
-        src_seq_len=model_config['max_seq_length'],
-        tgt_seq_len=model_config['max_seq_length'],
-        d_model=model_config['d_model'],
-        N=model_config['n_layers'],
-        h=model_config['n_heads'],
-        dropout=model_config['dropout'],
-        d_ff=model_config['d_ff']
+        src_vocab_size=config.src_vocab_size,
+        tgt_vocab_size=config.tgt_vocab_size,
+        src_seq_len=config.max_seq_length,
+        tgt_seq_len=config.max_seq_length,
+        d_model=config.d_model,
+        N=config.n_layers,
+        h=config.n_heads,
+        dropout=config.dropout,
+        d_ff=config.d_ff
     )
     return model
 
@@ -143,12 +147,25 @@ def train_model(config, model_config):
     print(f"Using device: {device}")
     Path(config['model_folder']).mkdir(parents=True,exist_ok=True)
     train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config, model_config['max_seq_length'])
-    model = get_model(tokenizer_src.get_vocab_size(),tokenizer_tgt.get_vocab_size(), model_config).to(device)
+    
+    # Sync actual special token IDs from tokenizers to config (for reproducibility)
+    model_config.pad_token_id = tokenizer_src.token_to_id("[PAD]")
+    model_config.bos_token_id = tokenizer_tgt.token_to_id("[SOS]")
+    model_config.eos_token_id = tokenizer_tgt.token_to_id("[EOS]")
+    
+    # Update config with actual vocabulary sizes from tokenizers
+    model_config.src_vocab_size = tokenizer_src.get_vocab_size()
+    model_config.tgt_vocab_size = tokenizer_tgt.get_vocab_size()
+    model_config.save_pretrained("config/")
+    print(f"Updated config with actual vocab sizes - src: {model_config.src_vocab_size}, tgt: {model_config.tgt_vocab_size}")
+    print(f"Special tokens synced - PAD: {model_config.pad_token_id}, BOS: {model_config.bos_token_id}, EOS: {model_config.eos_token_id}")
+    
+    model = get_model(model_config).to(device)
 
     # Display model and vocabulary info
     model_params = count_parameters(model)
-    src_vocab_size = tokenizer_src.get_vocab_size()
-    tgt_vocab_size = tokenizer_tgt.get_vocab_size()
+    src_vocab_size = model_config.src_vocab_size
+    tgt_vocab_size = model_config.tgt_vocab_size
     train_size = len(train_dataloader)
     total_tokens_per_epoch = train_size * config['batch_size'] * model_config['max_seq_length']
 
@@ -199,7 +216,7 @@ def train_model(config, model_config):
         model.load_state_dict(state['model_state_dict'])
         global_step = state['global_step']
 
-    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id("[PAD]"),label_smoothing=0.1).to(device)
+    loss_fn = nn.CrossEntropyLoss(ignore_index=model_config.pad_token_id,label_smoothing=0.1).to(device)
 
     last_loss_value = None
 
@@ -217,7 +234,7 @@ def train_model(config, model_config):
             proj_output = model.project(decoder_output)
 
             label = batch['label'].to(device)
-            loss = loss_fn(proj_output.view(-1,tokenizer_tgt.get_vocab_size()),label.view(-1))    
+            loss = loss_fn(proj_output.view(-1,model_config.tgt_vocab_size),label.view(-1))    
             batch_iterator.set_postfix({f"loss":f"{loss.item():6.3f}"})
 
             last_loss_value = loss.item()
@@ -231,7 +248,7 @@ def train_model(config, model_config):
 
             global_step += 1
 
-        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config['max_seq_length'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
+        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config['max_seq_length'],device,lambda msg: batch_iterator.write(msg),global_step,writer,model_config)
         
         model_filename = get_weights_file_path(config,f'{epoch:02d}')
         torch.save({
@@ -249,7 +266,7 @@ def train_model(config, model_config):
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    model_config = AutoConfig.from_pretrained("config/")
+    model_config = AutoConfig.from_pretrained("hf_integration/config.json")
     train_model(config, model_config)
 
             

@@ -1,0 +1,15 @@
+{
+  "bos_token_id": 1,
+  "d_ff": 2048,
+  "d_model": 512,
+  "dropout": 0.1,
+  "eos_token_id": 2,
+  "max_seq_length": 350,
+  "model_type": "custom_transformer",
+  "n_heads": 8,
+  "n_layers": 6,
+  "pad_token_id": 0,
+  "src_vocab_size": 30000,
+  "tgt_vocab_size": 30000,
+  "transformers_version": "5.5.0"
+}
