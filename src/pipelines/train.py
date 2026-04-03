@@ -12,6 +12,7 @@ from pathlib import Path
 import json
 
 from datasets import load_dataset
+from transformers import AutoConfig
 from src.model.model import build_transformer
 from src.utils.dataset import BilingualDataset, causal_mask
 from src.utils.config import get_config,get_weights_file_path
@@ -86,7 +87,7 @@ def get_or_build_tokenizer(config,ds,lang):
 
     return tokenizer
 
-def get_ds(config):
+def get_ds(config, max_seq_length):
     ds_raw = load_dataset('opus_books',f"{config['lang_src']}-{config['lang_tgt']}",split='train')
 
     tokenizer_src = get_or_build_tokenizer(config,ds_raw,config['lang_src'])
@@ -96,8 +97,8 @@ def get_ds(config):
     test_ds_size = len(ds_raw) - train_ds_size
     train_ds_raw,val_ds_raw = random_split(ds_raw,[train_ds_size,test_ds_size])
 
-    train_ds = BilingualDataset(train_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],config['seq_len'])
-    val_ds = BilingualDataset(val_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],config['seq_len'])
+    train_ds = BilingualDataset(train_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],max_seq_length)
+    val_ds = BilingualDataset(val_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],max_seq_length)
 
     max_len_src = 0
     max_len_tgt = 0
@@ -114,40 +115,53 @@ def get_ds(config):
     train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'],shuffle=True)
     val_dataloader = DataLoader(val_ds,batch_size=1,shuffle=True)
 
-    return train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt  
+    return train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt
 
 def count_parameters(model):
     """Count total trainable parameters in the model."""
     total = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total
 
-def get_model(config,vocab_src_len,vocab_tgt_len):
-    model = build_transformer(vocab_src_len,vocab_tgt_len,config['seq_len'],config['seq_len'],config['d_model'])
+def get_model(vocab_src_len, vocab_tgt_len, model_config):
+    """Build transformer using model config from config.json"""
+    model = build_transformer(
+        src_vocab_size=vocab_src_len,
+        tgt_vocab_size=vocab_tgt_len,
+        src_seq_len=model_config['max_seq_length'],
+        tgt_seq_len=model_config['max_seq_length'],
+        d_model=model_config['d_model'],
+        N=model_config['n_layers'],
+        h=model_config['n_heads'],
+        dropout=model_config['dropout'],
+        d_ff=model_config['d_ff']
+    )
     return model
 
 
-def train_model(config):
+def train_model(config, model_config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     Path(config['model_folder']).mkdir(parents=True,exist_ok=True)
-    train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config)
-    model = get_model(config,tokenizer_src.get_vocab_size(),tokenizer_tgt.get_vocab_size()).to(device)
+    train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config, model_config['max_seq_length'])
+    model = get_model(tokenizer_src.get_vocab_size(),tokenizer_tgt.get_vocab_size(), model_config).to(device)
 
     # Display model and vocabulary info
     model_params = count_parameters(model)
     src_vocab_size = tokenizer_src.get_vocab_size()
     tgt_vocab_size = tokenizer_tgt.get_vocab_size()
     train_size = len(train_dataloader)
-    total_tokens_per_epoch = train_size * config['batch_size'] * config['seq_len']
+    total_tokens_per_epoch = train_size * config['batch_size'] * model_config['max_seq_length']
 
     print(f"\n{'='*50}")
     print(f"Model Configuration:")
     print(f"{'='*50}")
     print(f"Total parameters: {model_params:,}")
-    print(f"Model dimension (d_model): {config['d_model']}")
+    print(f"Model dimension (d_model): {model_config['d_model']}")
+    print(f"Number of layers: {model_config['n_layers']}")
+    print(f"Number of heads: {model_config['n_heads']}")
     print(f"Source vocab size: {src_vocab_size:,}")
     print(f"Target vocab size: {tgt_vocab_size:,}")
-    print(f"Max sequence length: {config['seq_len']}")
+    print(f"Max sequence length: {model_config['max_seq_length']}")
     print(f"Training batches: {train_size:,}")
     print(f"Approx tokens per epoch: {total_tokens_per_epoch:,}")
     print(f"Total epochs: {config['num_epochs']}")
@@ -156,10 +170,11 @@ def train_model(config):
     # Save model configuration metadata at the start of training
     metadata = {
         "config": config,
+        "model_config": model_config,
         "model_parameters": int(model_params),
         "src_vocab_size": int(src_vocab_size),
         "tgt_vocab_size": int(tgt_vocab_size),
-        "seq_len": int(config['seq_len']),
+        "max_seq_len": int(model_config['max_seq_length']),
         "batch_size": int(config['batch_size']),
         "num_epochs": int(config['num_epochs']),
         "tokens_per_epoch": int(total_tokens_per_epoch),
@@ -216,7 +231,7 @@ def train_model(config):
 
             global_step += 1
 
-        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,config['seq_len'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
+        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config['max_seq_length'],device,lambda msg: batch_iterator.write(msg),global_step,writer)
         
         model_filename = get_weights_file_path(config,f'{epoch:02d}')
         torch.save({
@@ -234,7 +249,8 @@ def train_model(config):
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    train_model(config)
+    model_config = AutoConfig.from_pretrained("config/")
+    train_model(config, model_config)
 
             
     

@@ -1,0 +1,23 @@
+{
+    "config": {
+        "batch_size": 8,
+        "num_epochs": 20,
+        "lr": 0.0001,
+        "seq_len": 350,
+        "d_model": 512,
+        "lang_src": "en",
+        "lang_tgt": "it",
+        "model_folder": "models",
+        "model_basename": "tmodel_",
+        "preload": null,
+        "tokenizer_file": "tokenizer_{0}.json",
+        "experiment_name": "runs/tmodel"
+    },
+    "model_parameters": 75171328,
+    "src_vocab_size": 15699,
+    "tgt_vocab_size": 22464,
+    "seq_len": 350,
+    "batch_size": 8,
+    "num_epochs": 20,
+    "device": "cuda"
+}
