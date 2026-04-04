@@ -7,10 +7,37 @@ def causal_mask(size):
     mask = torch.triu(torch.ones(1, size, size), diagonal=1).type(torch.int)
     return mask == 0
 
-config = CustomTransformerConfig()
+config = CustomTransformerConfig().from_pretrained("hf_integration/config.json")
 model = CustomTransformerModel(config)
+checkpoint = torch.load('models/tmodel_04.pt', map_location=torch.device("cpu"))
 
-# Create test data with proper 4D masks like training does
+
+
+# Rename checkpoint keys to add the 'model.' prefix
+checkpoint_state = checkpoint['model_state_dict']
+fixed_state = {'model.' + k: v for k, v in checkpoint_state.items()}
+
+checkpoint_keys = set(fixed_state.keys())
+model_keys = set(model.state_dict().keys())
+
+missing_in_checkpoint = model_keys - checkpoint_keys
+extra_in_checkpoint = checkpoint_keys - model_keys
+
+print(f"in checkpoint (after prefix): {len(checkpoint_keys)}")
+print(f"in model: {len(model_keys)}")
+
+print("\nMissing in checkpoint:")
+for key in list(missing_in_checkpoint)[:10]:  
+    print(f"  {key}")
+print(f"  ... ({len(missing_in_checkpoint)} total)")
+
+print("\nExtra in checkpoint:")
+for key in list(extra_in_checkpoint)[:10]:  
+    print(f"  {key}")
+print(f"  ... ({len(extra_in_checkpoint)} total)")
+
+model.load_state_dict(fixed_state)
+
 batch_size = 2
 seq_len = 10
 pad_token_id = config.pad_token_id
@@ -31,3 +58,6 @@ output = model(
 
 print(model)
 print(output)
+
+model.save_pretrained("test_hf_model")
+config.save_pretrained("test_hf_model")

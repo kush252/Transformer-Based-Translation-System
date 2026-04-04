@@ -9,7 +9,7 @@
   "n_heads": 8,
   "n_layers": 6,
   "pad_token_id": 0,
-  "src_vocab_size": 30000,
-  "tgt_vocab_size": 30000,
+  "src_vocab_size": 15699,
+  "tgt_vocab_size": 22464,
   "transformers_version": "5.5.0"
 }
