@@ -147,7 +147,7 @@ def train_model(config, model_config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     Path(config['model_folder']).mkdir(parents=True,exist_ok=True)
-    train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config, model_config['max_seq_length'])
+    train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt = get_ds(config, model_config.max_seq_length)
     
     # Sync actual special token IDs from tokenizers to config (for reproducibility)
     model_config.pad_token_id = tokenizer_src.token_to_id("[PAD]")
@@ -168,18 +168,18 @@ def train_model(config, model_config):
     src_vocab_size = model_config.src_vocab_size
     tgt_vocab_size = model_config.tgt_vocab_size
     train_size = len(train_dataloader)
-    total_tokens_per_epoch = train_size * config['batch_size'] * model_config['max_seq_length']
+    total_tokens_per_epoch = train_size * config['batch_size'] * model_config.max_seq_length
 
     print(f"\n{'='*50}")
     print(f"Model Configuration:")
     print(f"{'='*50}")
     print(f"Total parameters: {model_params:,}")
-    print(f"Model dimension (d_model): {model_config['d_model']}")
-    print(f"Number of layers: {model_config['n_layers']}")
-    print(f"Number of heads: {model_config['n_heads']}")
+    print(f"Model dimension (d_model): {model_config.d_model}")
+    print(f"Number of layers: {model_config.n_layers}")
+    print(f"Number of heads: {model_config.n_heads}")
     print(f"Source vocab size: {src_vocab_size:,}")
     print(f"Target vocab size: {tgt_vocab_size:,}")
-    print(f"Max sequence length: {model_config['max_seq_length']}")
+    print(f"Max sequence length: {model_config.max_seq_length}")
     print(f"Training batches: {train_size:,}")
     print(f"Approx tokens per epoch: {total_tokens_per_epoch:,}")
     print(f"Total epochs: {config['num_epochs']}")
@@ -188,11 +188,11 @@ def train_model(config, model_config):
     # Save model configuration metadata at the start of training
     metadata = {
         "config": config,
-        "model_config": model_config,
+        "model_config": model_config.to_dict(),
         "model_parameters": int(model_params),
         "src_vocab_size": int(src_vocab_size),
         "tgt_vocab_size": int(tgt_vocab_size),
-        "max_seq_len": int(model_config['max_seq_length']),
+        "max_seq_len": int(model_config.max_seq_length),
         "batch_size": int(config['batch_size']),
         "num_epochs": int(config['num_epochs']),
         "tokens_per_epoch": int(total_tokens_per_epoch),
@@ -249,7 +249,7 @@ def train_model(config, model_config):
 
             global_step += 1
 
-        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config['max_seq_length'],device,lambda msg: batch_iterator.write(msg),global_step,writer,model_config)
+        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config.max_seq_length,device,lambda msg: batch_iterator.write(msg),global_step,writer,model_config)
         
         model_filename = get_weights_file_path(config,f'{epoch:02d}')
         torch.save({
