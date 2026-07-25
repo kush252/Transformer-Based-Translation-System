@@ -214,6 +214,9 @@ def train_model(config, model_config):
 
     writer = SummaryWriter(config['experiment_name'])
     optimizer = torch.optim.Adam(model.parameters(),lr=config['lr'],eps=1e-9)
+    
+    # Initialize Automatic Mixed Precision (AMP) scaler
+    scaler = torch.cuda.amp.GradScaler()
 
     initial_epoch = 0
     global_step = 0
@@ -225,11 +228,10 @@ def train_model(config, model_config):
         optimizer.load_state_dict(state['optimizer_state_dict'])
         model.load_state_dict(state['model_state_dict'])
         global_step = state['global_step']
+        if 'scaler_state_dict' in state:
+            scaler.load_state_dict(state['scaler_state_dict'])
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=model_config.pad_token_id,label_smoothing=0.1).to(device)
-
-    # Initialize Automatic Mixed Precision (AMP) scaler
-    scaler = torch.cuda.amp.GradScaler()
 
     last_loss_value = None
 
@@ -276,6 +278,7 @@ def train_model(config, model_config):
             'epoch': epoch,
             'model_state_dict': base_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
             'global_step': global_step
         }, model_filename)  
 
