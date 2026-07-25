@@ -96,7 +96,10 @@ def get_ds(config, max_seq_length):
 
     train_ds_size = int(len(ds_raw)*0.9)
     test_ds_size = len(ds_raw) - train_ds_size
-    train_ds_raw,val_ds_raw = random_split(ds_raw,[train_ds_size,test_ds_size])
+    
+    # Set fixed seed for reproducibility across train and evaluate scripts
+    generator = torch.Generator().manual_seed(42)
+    train_ds_raw,val_ds_raw = random_split(ds_raw,[train_ds_size,test_ds_size], generator=generator)
 
     train_ds = BilingualDataset(train_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],max_seq_length)
     val_ds = BilingualDataset(val_ds_raw,tokenizer_src,tokenizer_tgt,config['lang_src'],config['lang_tgt'],max_seq_length)
