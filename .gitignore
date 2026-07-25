@@ -2,3 +2,4 @@ venv
 *.pyc
 .env
 *.pt
+test_hf_model/model.safetensors
