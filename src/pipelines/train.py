@@ -113,8 +113,9 @@ def get_ds(config, max_seq_length):
     print(f"Max len src: {max_len_src}")
     print(f"Max len tgt: {max_len_tgt}")
 
-    train_dataloader = DataLoader(train_ds,batch_size=config['batch_size'],shuffle=True)
-    val_dataloader = DataLoader(val_ds,batch_size=1,shuffle=True)
+    # Use pin_memory=True and num_workers>0 to speed up data transfer to GPU
+    train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True, num_workers=2, pin_memory=True)
+    val_dataloader = DataLoader(val_ds, batch_size=1, shuffle=True, num_workers=1, pin_memory=True)
 
     return train_dataloader,val_dataloader,tokenizer_src,tokenizer_tgt
 
@@ -162,6 +163,11 @@ def train_model(config, model_config):
     print(f"Special tokens synced - PAD: {model_config.pad_token_id}, BOS: {model_config.bos_token_id}, EOS: {model_config.eos_token_id}")
     
     model = get_model(model_config).to(device)
+    
+    # Use DataParallel to utilize multiple GPUs (e.g., T4 x2 on Kaggle)
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs with DataParallel!")
+        model = nn.DataParallel(model)
 
     # Display model and vocabulary info
     model_params = count_parameters(model)
@@ -219,6 +225,9 @@ def train_model(config, model_config):
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=model_config.pad_token_id,label_smoothing=0.1).to(device)
 
+    # Initialize Automatic Mixed Precision (AMP) scaler
+    scaler = torch.cuda.amp.GradScaler()
+
     last_loss_value = None
 
     for epoch in range(initial_epoch,config['num_epochs']):
@@ -230,31 +239,39 @@ def train_model(config, model_config):
             encoder_mask = batch['encoder_mask'].to(device)
             decoder_mask = batch['decoder_mask'].to(device)
 
-            encoder_output = model.encode(encoder_input,encoder_mask)
-            decoder_output = model.decode(encoder_output,encoder_mask,decoder_input,decoder_mask)
-            proj_output = model.project(decoder_output)
-
             label = batch['label'].to(device)
-            loss = loss_fn(proj_output.view(-1,model_config.tgt_vocab_size),label.view(-1))    
+            
+            # Use Automatic Mixed Precision for faster forward pass and less memory
+            with torch.autocast(device_type=device.type, dtype=torch.float16 if device.type == 'cuda' else torch.bfloat16):
+                # Use the forward method so DataParallel can automatically split the batch across GPUs
+                proj_output = model(encoder_input, encoder_mask, decoder_input, decoder_mask)
+                loss = loss_fn(proj_output.view(-1,model_config.tgt_vocab_size),label.view(-1))    
+            
             batch_iterator.set_postfix({f"loss":f"{loss.item():6.3f}"})
-
             last_loss_value = loss.item()
 
             writer.add_scalar("train loss",loss.item(),global_step)
             writer.flush()
 
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
+            # AMP backward pass
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            # Using set_to_none=True is slightly faster than zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             global_step += 1
 
-        run_validation(model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config.max_seq_length,device,lambda msg: batch_iterator.write(msg),global_step,writer,model_config)
+        # Extract the base model if wrapped in DataParallel for validation and saving
+        base_model = model.module if hasattr(model, 'module') else model
+
+        run_validation(base_model,val_dataloader,tokenizer_src,tokenizer_tgt,model_config.max_seq_length,device,lambda msg: batch_iterator.write(msg),global_step,writer,model_config)
         
         model_filename = get_weights_file_path(config,f'{epoch:02d}')
         torch.save({
             'epoch': epoch,
-            'model_state_dict': model.state_dict(),
+            'model_state_dict': base_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'global_step': global_step
         }, model_filename)  
