@@ -13,6 +13,7 @@ import json
 
 from datasets import load_dataset
 from transformers import AutoConfig
+from hf_integration.configuration_custom import CustomTransformerConfig
 from src.model.model import build_transformer
 from src.utils.dataset import BilingualDataset, causal_mask
 from src.utils.config import get_config,get_weights_file_path
@@ -266,7 +267,7 @@ def train_model(config, model_config):
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    model_config = AutoConfig.from_pretrained("hf_integration/config.json")
+    model_config = CustomTransformerConfig.from_pretrained("hf_integration/config.json")
     train_model(config, model_config)
 
             
