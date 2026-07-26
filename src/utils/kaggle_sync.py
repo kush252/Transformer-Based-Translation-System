@@ -88,7 +88,7 @@ def sync_to_kaggle_dataset(dataset_slug, dataset_title, folder_to_sync="kaggle_s
 
 if __name__ == "__main__":
     # REPLACE THIS WITH YOUR KAGGLE USERNAME AND DESIRED DATASET NAME
-    KAGGLE_USERNAME = "yourusername" 
+    KAGGLE_USERNAME = "thorfromasgard" 
     DATASET_NAME = "trans-trans-checkpoints"
     
     DATASET_SLUG = f"{KAGGLE_USERNAME}/{DATASET_NAME}"
