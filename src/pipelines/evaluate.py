@@ -9,6 +9,7 @@ from hf_integration.configuration_custom import CustomTransformerConfig
 # Import metrics
 try:
     from torchmetrics.text.bleu import BLEUScore
+    from torchmetrics.text.sacre_bleu import SacreBLEUScore
     from torchmetrics.text.cer import CharErrorRate
     from torchmetrics.text.wer import WordErrorRate
 except ImportError:
@@ -48,6 +49,7 @@ def evaluate_model(config, model_config):
 
     # Initialize metrics
     bleu = BLEUScore()
+    sacre_bleu = SacreBLEUScore()
     cer = CharErrorRate()
     wer = WordErrorRate()
 
@@ -95,6 +97,7 @@ def evaluate_model(config, model_config):
     bleu_targets = [[target] for target in expected_translations]
     
     b_score = bleu(predicted_translations, bleu_targets)
+    sb_score = sacre_bleu(predicted_translations, bleu_targets)
     c_score = cer(predicted_translations, expected_translations)
     w_score = wer(predicted_translations, expected_translations)
     
@@ -102,6 +105,7 @@ def evaluate_model(config, model_config):
     print(f"EVALUATION RESULTS:")
     print(f"{'-'*30}")
     print(f"BLEU Score: {b_score.item():.4f} (Higher is better, max 1.0)")
+    print(f"SacreBLEU:  {sb_score.item():.4f} (Standardized tokenizer, 0-100 scale)")
     print(f"CER:        {c_score.item():.4f} (Lower is better, min 0.0)")
     print(f"WER:        {w_score.item():.4f} (Lower is better, min 0.0)")
     print(f"{'-'*30}")
