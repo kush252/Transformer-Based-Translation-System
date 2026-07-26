@@ -40,9 +40,10 @@ def sync_to_kaggle_dataset(dataset_slug, dataset_title, folder_to_sync="kaggle_s
             
         dest_path = sync_dir / item
         if item_path.is_dir():
-            shutil.copytree(item_path, dest_path)
+            # Use os.link to create hard links instead of copying data (saves disk space)
+            shutil.copytree(item_path, dest_path, copy_function=os.link)
         else:
-            shutil.copy2(item_path, dest_path)
+            os.link(item_path, dest_path)
             
     print("Files gathered successfully.")
 
