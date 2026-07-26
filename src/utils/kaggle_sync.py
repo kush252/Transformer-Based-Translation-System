@@ -5,47 +5,30 @@ import shutil
 import subprocess
 from pathlib import Path
 
-def sync_to_kaggle_dataset(dataset_slug, dataset_title, folder_to_sync="kaggle_sync", update_message="Updating weights"):
+def sync_to_kaggle_dataset(dataset_slug, dataset_title, update_message="Updating weights"):
     """
-    Syncs training artifacts to a Kaggle dataset.
+    Syncs the current directory to a Kaggle dataset.
     
     Args:
         dataset_slug (str): Your kaggle dataset slug (e.g., 'yourusername/trans-trans-weights')
         dataset_title (str): Title for the dataset (only used if creating new)
-        folder_to_sync (str): Temporary folder to gather files before upload
         update_message (str): Message for the dataset version update
     """
-    sync_dir = Path(folder_to_sync)
+    sync_dir = Path(".")
     
-    # 1. Gather all required files into the sync directory
-    print(f"Gathering files into {sync_dir}...")
-    if sync_dir.exists():
-        shutil.rmtree(sync_dir)
-    sync_dir.mkdir(parents=True)
-
-    # Directories/Files to save
-    items_to_save = [
-        "models",           # Model weights and metadata
-        "runs",             # TensorBoard logs
-        "config",           # Model configurations
-        "tokenizer_en.json",
-        "tokenizer_it.json"
-    ]
-
-    for item in items_to_save:
-        item_path = Path(item)
-        if not item_path.exists():
-            print(f"Warning: {item} does not exist. Skipping.")
-            continue
-            
-        dest_path = sync_dir / item
-        if item_path.is_dir():
-            # Use os.link to create hard links instead of copying data (saves disk space)
-            shutil.copytree(item_path, dest_path, copy_function=os.link)
-        else:
-            os.link(item_path, dest_path)
-            
-    print("Files gathered successfully.")
+    # 1. Clean up old checkpoints to free space (keep only latest 3)
+    # This prevents Kaggle from running out of disk space entirely!
+    models_dir = Path("models")
+    if models_dir.exists():
+        checkpoints = sorted(models_dir.glob("*.pt"))
+        if len(checkpoints) > 3:
+            print(f"Found {len(checkpoints)} checkpoints. Deleting older ones to free up space...")
+            for cp in checkpoints[:-3]:
+                try:
+                    cp.unlink()
+                    print(f"Deleted {cp}")
+                except Exception as e:
+                    print(f"Could not delete {cp}: {e}")
 
     # 2. Check if Kaggle API is accessible
     try:
